@@ -34,6 +34,35 @@ def to_tuple(data):
     return data
 
 
+def rotation_matrix_to_euler_angles(R):
+    """
+    Convert a rotation matrix to Euler angles (ZYX order).
+    
+    Parameters:
+    R (np.array): 3x3 rotation matrix
+
+    Returns:
+    tuple: Euler angles (alpha, beta, gamma) in radians
+    """
+    # Check if the matrix is a valid rotation matrix
+    if not (np.allclose(np.dot(R, R.T), np.eye(3), atol=1e-4, rtol=1e-4) and np.isclose(np.linalg.det(R), 1.0)):
+        raise ValueError("The provided matrix is not a valid rotation matrix")
+
+    sy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+
+    singular = sy < 1e-6
+
+    if not singular:
+        x = np.arctan2(R[2, 1], R[2, 2])
+        y = np.arctan2(-R[2, 0], sy)
+        z = np.arctan2(R[1, 0], R[0, 0])
+    else:
+        x = np.arctan2(-R[1, 2], R[1, 1])
+        y = np.arctan2(-R[2, 0], sy)
+        z = 0
+
+    return np.array([x, y, z])  # ZYX order
+
 class DianaControl():
     def __init__(self, ip_address):
         self.robot_api = DianaApi
@@ -495,6 +524,7 @@ class DianaControl():
         Stop the robot
         :return:
         """
+        print("diana_control.stop...")
         self.robot_api.stop(self.ip_address)
 
     def __del__(self):
