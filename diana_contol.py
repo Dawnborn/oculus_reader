@@ -244,6 +244,32 @@ class DianaControl():
         if not success:
             self.logger.error("Failed to move to the TCP position.")
         return success
+    
+    def move_tcp_speed(self,speeds,acc, t):
+        speeds = to_tuple(speeds)
+        acc = to_tuple(acc)
+        success = self.robot_api.speedL(speeds,acc,t,self.ip_address)
+        return success
+
+    def move_tcp_servoL(self, tcp_pos, t=0.01, ah_t=0.2, scale=1.0, gain=300, realiable=True):
+        """
+        默认参数对于100hz 0.001m下比较平滑
+
+        pose：基坐标系下的目标位姿数组的首地址，数组长度为 6。前三个元素单位：m；后三
+        个元素单位：rad，注意，后三个角度需要是轴角。 
+        time：运动时间。单位：s。 
+        ah_time: look_ahead_time：时间（S），范围（0.03-0.2）大参数使轨迹更平滑。 
+        gain：目标位置的比例放大器，范围（100,2000）。  
+        scale：平滑比例系数。范围（0.0~1.0）。  
+        active_tcp：需要移动的工具中心点对应的位姿向量（基于法兰坐标系），大小为 6 的数
+        组，为空时将移动系统当前工具的中心点至pose。（注意：此处active_tcp 作为工具） 
+        strIpAddress：可选参数，需要控制机械臂的IP 地址字符串，不填仅当只连接一台机械臂
+        时生效。
+        """
+        tcp_pos = to_tuple(tcp_pos)
+        success = self.robot_api.servoL_ex(tcp_pose=tcp_pos, t=t, ah_t=ah_t, gain=gain, scale=scale, ipAddress=self.ip_address,realiable=realiable)
+        # self.robot_api.wait_move()
+        return success
 
     def open_free_drive(self, mode="normal"):
         """

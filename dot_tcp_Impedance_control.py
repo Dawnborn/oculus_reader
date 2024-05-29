@@ -5,11 +5,17 @@ import numpy as np
 from oculus_reader.reader import OculusReader
 import time
 
+from pyRobotiqGripper import RobotiqGripper
+
 '''
     The configuration of impedance is according to the TCP axis, you still can control the robot for both tcp and joints.
     And trajectory seems will end by fixed time, or fixed number of the waypoints, it will not check if the goal if reached.
 '''
 def test():
+
+    gripper = RobotiqGripper()
+    gripper.activate()
+
     ip_addr = "192.168.10.75"
     diana = DianaControl(ip_address=ip_addr)
     # diana.set_log_level('DEBUG')
@@ -33,33 +39,44 @@ def test():
     success = diana.change_control_mode("position")
     print(f"change control mode:{success}")
 
-    # position = np.array([400,-400,200])/1000
-    home_position = np.array([-200,400,800])/1000
-    # orientation = np.array([10,-6,-50])/180*np.pi
-    home_orientation = np.array([0,10,0])/180*np.pi
-    tcp_pos_target = np.concatenate([home_position,home_orientation],axis=-1)
-    print("moving to home pose {}...........".format(tcp_pos_target))
-    success = diana.move_tcp(
-        tcp_pos=tcp_pos_target,
-        vel=0.2,
-        acc=1,
-        wait=True
-    )
+    # home_position = np.array([-200,400,800])/1000
+    # home_orientation = np.array([0,10,0])/180*np.pi
+    # tcp_pos_target = np.concatenate([home_position,home_orientation],axis=-1)
+    # print("moving to home pose {}...........".format(tcp_pos_target))
+    # success = diana.move_tcp(
+    #     tcp_pos=tcp_pos_target,
+    #     vel=0.2,
+    #     acc=1,
+    #     wait=True
+    # )
+
+    joints_pos_home = np.asarray([0.20555325057509052, -0.011840602165761105, -0.30533428759153086, 1.6415630854522976, 0.0369351961063038, -1.3390572623605348, 0.15645387821129342])
+    success = diana.move_joints(joints_pos_home,wait=True, vel=0.5)
 
     rot_vr2bot = np.array([-1,0,0, 0,0,1, 0,1,0]).reshape((3,3)) # 眼镜与机器人基座的坐标系转换
     # rot_tcp = np.array([-1,0,0, 0,1,0, 0,0,-1]).reshape((3,3))
-    rot_tcp = np.array([1,0,0, 0,-1,0, 0,0,-1]).reshape((3,3))
+    rot_tcp = np.array([1,0,0, 0,-1,0, 0,0,-1]).reshape((3,3)) # tcp与手柄的转换关系
+    
     scale = 1
+    scale = 4
+    scale = 6 # servo
+    # scale = 12
+    # scale = 24
+    scale = 36
+    scale = 42
+
     vel_scale = 8
-    vel_scale = 6
+    # vel_scale = 3
+    
     wait = True
+    TIME_STEP=0.02
 
     input("please put on the VR device to wake it up before continue")
     oculus_reader = OculusReader()
 
     dot_translation_pre = None
     while(True):
-        time.sleep(0.1)
+        time.sleep(TIME_STEP)
         ret = oculus_reader.get_transformations_and_buttons()
         try:
             rotmat_right = ret[0]['r']
@@ -70,17 +87,18 @@ def test():
         buttons = ret[1]
 
         rightGrip = buttons['rightGrip'][0]
+        rightTrig = buttons['rightTrig'][0]
 
         if(buttons['A']):
-            tcp_pos_target = np.concatenate([home_position,home_orientation],axis=-1)
-            print("tcp_pos_target:{}".format(tcp_pos_target))
-            success = diana.move_tcp(
-                tcp_pos=tcp_pos_target,
-                vel=0.5,
-                acc=0.5,
-                wait=True
-            )
-            time.sleep(1.0)
+            # tcp_pos_target = np.concatenate([home_position,home_orientation],axis=-1)
+            # print("tcp_pos_target:{}".format(tcp_pos_target))
+            # success = diana.move_tcp(
+            #     tcp_pos=tcp_pos_target,
+            #     vel=0.5,
+            #     acc=0.5,
+            #     wait=True
+            # )
+            success = diana.move_joints(joints_pos_home,wait=True, vel=0.5, acc=0.5)
             print(f"Move joints home success: {success}")
             continue
 
@@ -92,6 +110,7 @@ def test():
 
         dot_translation = rotmat_right[:3,-1]
         dot_translation_relative = np.zeros(3)
+        gripper.goTo(int(rightTrig*255),force=50)
         if(rightGrip>0.5):
             print(rotmat_right)
             if dot_translation_pre is None:
@@ -101,6 +120,7 @@ def test():
                 dot_translation_relative = np.dot(rot_vr2bot, dot_translation_relative)
                 print("dot_translation_relative: {}".format(dot_translation_relative))
                 tcp_current_pose = diana.get_tcp_pos()
+                print("tcp_current_translation: {}".format(tcp_current_pose[:3]))
                 tcp_next_translation = tcp_current_pose[:3] + dot_translation_relative*scale
                 print("tcp_next_translation: {}".format(tcp_next_translation))
 
@@ -120,6 +140,7 @@ def test():
 
                 orientation_pre = tcp_current_pose[3:6]
                 orientation_diff = np.linalg.norm(orientation_pre - orientation)
+                print("orientation_diff: {}".format(orientation_diff))
                 vel_raw += orientation_diff
 
                 vel = vel_raw
@@ -136,12 +157,13 @@ def test():
 
                 tcp_pos_target = np.concatenate([tcp_next_translation,orientation],axis=-1)
 
-                success = diana.move_tcp(
-                    tcp_pos=tcp_pos_target,
-                    vel=vel,
-                    acc=2,
-                    wait=wait
-                )
+                # success = diana.move_tcp(
+                #     tcp_pos=tcp_pos_target,
+                #     vel=vel,
+                #     acc=2,
+                #     wait=wait
+                # )
+                success = diana.move_tcp_servoL(tcp_pos=tcp_pos_target, t=TIME_STEP, gain=600, realiable=True)
                 print(f"Move joints success: {success}")
 
                 dot_translation_pre = dot_translation
