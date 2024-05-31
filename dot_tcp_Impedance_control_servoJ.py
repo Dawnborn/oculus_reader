@@ -51,6 +51,7 @@ def test():
     # )
 
     joints_pos_home = np.asarray([0.20555325057509052, -0.011840602165761105, -0.30533428759153086, 1.6415630854522976, 0.0369351961063038, -1.3390572623605348, 0.15645387821129342])
+    joints_pos_home = np.asarray([-1.1570767963258144, 0.11702577592257235, -1.0692687497175277, 1.8052795916426385, 0.17278837773090672, -1.200028260946719, -1.4878777506126735])
     # success = diana.move_joints(joints_pos_home,wait=True, vel=0.5)
 
     rot_vr2bot = np.array([-1,0,0, 0,0,1, 0,1,0]).reshape((3,3)) # 眼镜与机器人基座的坐标系转换
@@ -58,19 +59,19 @@ def test():
     rot_tcp = np.array([1,0,0, 0,-1,0, 0,0,-1]).reshape((3,3)) # tcp与手柄的转换关系
     
     scale = 1
+    scale = 2
     scale = 4
-    scale = 6 # servo
+    # scale = 6 # servo
     # scale = 12
-    scale = 24
+    # scale = 24
     # scale = 36
     # scale = 42
-    # scale = 1
 
     vel_scale = 8
     # vel_scale = 3
     
     wait = True
-    TIME_STEP=0.02
+    TIME_STEP=1./50
 
     input("please put on the VR device to wake it up before continue")
     oculus_reader = OculusReader()
@@ -119,12 +120,10 @@ def test():
             else:
                 dot_translation_relative = (dot_translation - dot_translation_pre)
                 dot_translation_relative = np.dot(rot_vr2bot, dot_translation_relative)
-                dot_translation_relative_scaled = dot_translation_relative*scale
-                print("dot_translation_relative (scaled): {}".format(dot_translation_relative_scaled))
+                print("dot_translation_relative: {}".format(dot_translation_relative))
                 tcp_current_pose = diana.get_tcp_pos()
                 print("tcp_current_translation: {}".format(tcp_current_pose[:3]))
-                dot_translation_relative_scaled = np.clip(dot_translation_relative_scaled, -0.1, 0.1)
-                tcp_next_translation = tcp_current_pose[:3] + dot_translation_relative_scaled
+                tcp_next_translation = tcp_current_pose[:3] + dot_translation_relative*scale
                 print("tcp_next_translation: {}".format(tcp_next_translation))
 
                 vel_raw = np.linalg.norm(dot_translation_relative)
@@ -166,8 +165,16 @@ def test():
                 #     acc=2,
                 #     wait=wait
                 # )
-                success = diana.move_tcp_servoL(tcp_pos=tcp_pos_target, ah_t=0.09, t=TIME_STEP, gain=100, realiable=True)
-                print(f"Move joints success: {success}")
+
+                # success = diana.move_tcp_servoL(tcp_pos=tcp_pos_target, t=TIME_STEP, gain=600, realiable=True)
+                # print(f"Move joints success: {success}")
+                
+                joints = diana.inverse_kinematics_ext(tcp_pos_target)
+                if not (joints is None):
+                    success = diana.move_tcp_servoJ(joints=joints, time=TIME_STEP, gain=200, look_ahead_time=0.2)
+                    print(f"Move joints success: {success}")
+                else:
+                    print("inverse fail!!!")
 
                 dot_translation_pre = dot_translation
         else:
