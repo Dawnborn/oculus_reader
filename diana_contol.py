@@ -33,6 +33,20 @@ def to_tuple(data):
         data = tuple(data.tolist())
     return data
 
+def to_list(data):
+    if isinstance(data, np.ndarray):
+        data = data.tolist()
+    return data
+
+def homogeneous2Pose(homogeneous):
+    homogeneous = to_tuple(homogeneous)
+    pose = [0]*6
+    success = DianaApi.homogeneous2Pose(homogeneous,pose)
+    if success:
+        return pose
+    else:
+        return None
+
 
 def rotation_matrix_to_euler_angles(R):
     """
@@ -181,15 +195,17 @@ class DianaControl():
             self.logger.error("Failed to compute forward kinematics.")
             return None
 
-    def inverse_kinematics(self, tcp_pos):
+    def inverse_kinematics(self, tcp_pos, ref_joints=None):
         """
         Compute the backward kinematics of the robot
         :param tcp_pos: the TCP position to compute the backward kinematics for, in meters
         :return: the joint positions in radians
         """
-
         joints = [0.0] * 7
-        success = self.robot_api.inverse(tcp_pos, joints, self.ip_address)
+        if ref_joints is None:
+            success = self.robot_api.inverse(tcp_pos, joints, self.ip_address)
+        else:
+            success = self.robot_api.inverse_ext(ref_joints, tcp_pos, joints, ipAddress=self.ip_address)
         if success:
             return joints
         else:
@@ -269,6 +285,11 @@ class DianaControl():
         tcp_pos = to_tuple(tcp_pos)
         success = self.robot_api.servoL_ex(tcp_pose=tcp_pos, t=t, ah_t=ah_t, gain=gain, scale=scale, ipAddress=self.ip_address,realiable=realiable)
         # self.robot_api.wait_move()
+        return success
+    
+    def move_tcp_servoJ(self, joints, time=0.01, look_ahead_time=0.03, gain=300, reliable=False):
+        joints = to_list(joints)
+        success = self.robot_api.servoJ(joints_pos=joints, t=time, ah_t=look_ahead_time, gain=gain, ipAddress=self.ip_address)
         return success
 
     def open_free_drive(self, mode="normal"):

@@ -148,3 +148,7 @@ cython_debug/
 
 # Project relevant
 app_source/Projects/Android/.idea/caches/
+
+**/.idea
+.vscode
+demo
