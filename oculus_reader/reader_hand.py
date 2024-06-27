@@ -1,9 +1,17 @@
+import os
+import sys
+current_file_path = os.path.abspath(__file__)
+current_directory = os.path.dirname(current_file_path)
+sys.path.append(current_directory)
+
 from FPS_counter import FPSCounter
 
 import numpy as np
+from scipy.spatial.transform import Rotation as R
+
 import threading
 import time
-import os
+
 from ppadb.client import Client as AdbClient # 实现通信的核心组件
 import sys
 
@@ -19,24 +27,28 @@ class OculusHandReader:
             ip_address=None,
             port = 5555,
             APK_name='com.DefaultCompany.hand',
-            print_FPS=False,
-            run=True
+            print_FPS=True,
+            run=True,
+            APK_path=None,
+            reinstall=False,
+            tag = 'rightLocalWorldMatrix'
         ):
         self.running = False
         self.last_transforms = {}
         self.last_buttons = {}
         self._lock = threading.Lock()
-        self.tag = 'rightLocalWorldMatrix'
+        self.tag = tag
 
         self.ip_address = ip_address
         self.port = port
         self.APK_name = APK_name
+        self.APK_path = APK_path
         self.print_FPS = print_FPS
         if self.print_FPS:
             self.fps_counter = FPSCounter()
 
         self.device = self.get_device()
-        self.install(verbose=False)
+        self.install(verbose=False, reinstall=reinstall, APK_path=self.APK_path)
         if run:
             self.run()
 
@@ -48,7 +60,7 @@ class OculusHandReader:
         # 将实例的running属性设置为True，表示该方法正在运行
         self.running = True
         # 使用adb命令启动Android设备上的特定应用
-        self.device.shell('am start -n com.DefaultCompany.hand/com.unity3d.player.UnityPlayerActivity')
+        self.device.shell('am start -n {}/com.unity3d.player.UnityPlayerActivity'.format(self.APK_name))
         """
             这行代码通过adb shell命令启动Android设备上的特定应用。
             am start -n：使用Activity Manager (am)来启动一个新的Activity。
@@ -114,6 +126,7 @@ class OculusHandReader:
                 if APK_path is None:
                     APK_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'APK', 'hand.apk')
                     print("using default APK_path:{}".format(APK_path))
+                print("using APK path:{}".format(APK_path))
                 success = self.device.install(APK_path, test=True, reinstall=reinstall)
                 installed = self.device.is_installed(self.APK_name)
                 if installed and success:
@@ -149,21 +162,40 @@ class OculusHandReader:
             exit(1)
 
     def process_data(self, data):
-        ret = {
-                        "right":data.split("&")[0],
-                        "right_pinch":data.split("&")[1]
+
+        if self.tag == "rightLocalWorldMatrix":
+
+            ret = {
+                            "right":data.split("&")[0],
+                            "right_pinch":data.split("&")[1]
+                }
+            right = ret["right"].split(" ")
+            right = np.array([float(i) for i in right])
+            right = right.reshape(4,-1)
+            ret["right"] = right
+            return ret["right"], ret["right_pinch"]
+        
+        elif self.tag == "xyzxyzw":
+            
+            ret = {
+                "right":data.split("&")[0],
+                "right_pinch":data.split("&")[1]
             }
-        
-        right = ret["right"].split(" ")
+            right = ret["right"].split(" ")
+            right = np.array([float(i) for i in right])
+            xyz = right[:3]
+            xyzw = right[3:]
 
-        right = np.array([float(i) for i in right])
+            rot = R.from_quat(xyzw)
+            h = np.eye(4)
+            h[:3,:3] = rot.as_matrix()
+            h[:3,3] = xyz
 
-        right = right.reshape(4,-1)
+            ret["right"] = h
+            return ret["right"], ret["right_pinch"]
+        else:
+            raise NotImplementedError
 
-        ret["right"] = right
-        
-        return ret["right"], ret["right_pinch"]
-    
     def extract_data(self, line):
         output = ''
         if self.tag in line:
