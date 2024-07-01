@@ -60,7 +60,7 @@ def test():
         vis.add_geometry(mesh_frame_tcp_target)
 
     input("please put on the VR device to wake it up before continue")
-    oculus_reader = OculusHandReader(reinstall=False,tag="xyzxyzw")
+    oculus_reader = OculusHandReader(reinstall=True,tag="xyzxyzw",APK_path="oculus_reader/APK_stable/posesample.apk")
 
     kf_position = KalmanFilter(dim_x=3, dim_z=3)
     kf_position.set_measurement_matrix(np.eye(3))
