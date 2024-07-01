@@ -88,3 +88,20 @@ If you intend to use the precompiled APK with the predefined behavior, where the
 7. Provide the IP address when creating OculusReader object.
 8. Run the exemplary file: `python oculus_reader/reader.py`
 9. (optionally) If ROS is installed on your machine, the current transformation can be visualized using the script [visualize_oculus_transforms.py](oculus_reader/visualize_oculus_transforms.py).
+
+# Myinstall
+
+```bash
+conda create -n oculus38 python=3.8
+pip install numpy pure-python-adb pyyaml
+
+pip install minimalmodbus
+cd ~/Documents/ws_robotiq/pyRobotiqGripper # robotiq gripper
+pip install -e .
+```
+
+# Myinstall UR
+
+```bash
+pip install --user ur_rtde
+```

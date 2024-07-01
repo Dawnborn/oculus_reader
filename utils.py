@@ -179,7 +179,6 @@ def ensure_vector_continuity(current_vector, new_vector):
         return -new_vector
     return new_vector
 
-
 def o3d_left_multiply_transform(mesh, M):
     """
     Apply a transformation matrix to all vertices of the mesh using left multiplication.
@@ -206,55 +205,6 @@ def o3d_left_multiply_transform(mesh, M):
     
     # Update the mesh vertices
     mesh.vertices = o3d.utility.Vector3dVector(transformed_vertices)
-
-def urpose2homomatrix(ur_pose):
-    """
-    This function calculates the homogeneous transformation matrix from the given pose.
-    
-    Parameters:
-    ur_pose (np.array): A 6-element array containing px, py, pz, rx, ry, rz
-
-    Returns:
-    np.array: A 4x4 homogeneous transformation matrix
-    """
-    px, py, pz, rx, ry, rz = ur_pose
-    
-    angle = np.sqrt(rx**2 + ry**2 + rz**2)
-
-    kx = rx / angle
-    ky = ry / angle
-    kz = rz / angle
-
-    # Initialize the 4x4 homogeneous transformation matrix with zeros
-    homo_matrix = np.zeros((4, 4))
-
-    # Fill in the rotation part of the matrix
-    cos_angle = np.cos(angle)
-    sin_angle = np.sin(angle)
-    one_minus_cos = 1 - cos_angle
-
-    homo_matrix[0, 0] = cos_angle + kx * kx * one_minus_cos
-    homo_matrix[0, 1] = kx * ky * one_minus_cos - kz * sin_angle
-    homo_matrix[0, 2] = ky * sin_angle + kx * kz * one_minus_cos
-    homo_matrix[0, 3] = px
-
-    homo_matrix[1, 0] = kz * sin_angle + kx * ky * one_minus_cos
-    homo_matrix[1, 1] = cos_angle + ky * ky * one_minus_cos
-    homo_matrix[1, 2] = -kx * sin_angle + ky * kz * one_minus_cos
-    homo_matrix[1, 3] = py
-
-    homo_matrix[2, 0] = -ky * sin_angle + kx * kz * one_minus_cos
-    homo_matrix[2, 1] = kx * sin_angle + ky * kz * one_minus_cos
-    homo_matrix[2, 2] = cos_angle + kz * kz * one_minus_cos
-    homo_matrix[2, 3] = pz
-
-    # The last row of the homogeneous transformation matrix
-    homo_matrix[3, 0] = 0
-    homo_matrix[3, 1] = 0
-    homo_matrix[3, 2] = 0
-    homo_matrix[3, 3] = 1
-
-    return homo_matrix
 
 def limit_orientation_change(current_orientation, target_orientation, max_change=0.1):
     """

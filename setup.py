@@ -8,7 +8,7 @@ setup(
     license='Apache-2.0 License',
     long_description=open('README.md').read(),
     install_requires=[
-        'numpy', 'pure-python-adb'
+        'numpy', 'pure-python-adb', 'pyyaml'
     ],
     package_data={'': ['APK/teleop-debug.apk']},
     include_package_data=True,

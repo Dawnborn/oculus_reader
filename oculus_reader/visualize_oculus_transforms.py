@@ -32,7 +32,7 @@ def main():
     rospy.init_node('oculus_reader')
 
     while not rospy.is_shutdown():
-        rospy.sleep(1)
+        rospy.sleep(0.2)
         transformations, buttons = oculus_reader.get_transformations_and_buttons()
         if 'r' not in transformations:
             continue
