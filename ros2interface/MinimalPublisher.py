@@ -21,15 +21,19 @@ class MinimalPublisher(Node):
     def timer_callback(self):
         msg = String()
         if self.msg2send:
-            msg.data = 'Hello, ROS 2: %d' % self.i
+            # msg.data = 'Hello, ROS 2: %d' % self.i
+            msg.data = self.msg2send + str(self.i)
             self.publisher_.publish(msg)
-            self.get_logger().info('Publishing: "%s"' % msg.data)
+            # self.get_logger().info('Publishing: "%s" %d' % msg.data % self.i)
+            self.get_logger().info('Publishing: "%s"' % (msg.data))
             self.i += 1
 
 def main(args=None):
     rclpy.init(args=args)
 
     minimal_publisher = MinimalPublisher()
+
+    minimal_publisher.set_msg2send("Hello!")
 
     rclpy.spin(minimal_publisher)
 

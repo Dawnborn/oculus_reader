@@ -1,10 +1,16 @@
-from oculus_reader.FPS_counter import FPSCounter
-from oculus_reader.buttons_parser import parse_buttons
+import os
+import sys
+current_file_path = os.path.abspath(__file__)
+current_directory = os.path.dirname(current_file_path)
+sys.path.append(current_directory)
+from FPS_counter import FPSCounter
+from buttons_parser import parse_buttons
+
 import numpy as np
 import threading
 import time
 import os
-from ppadb.client import Client as AdbClient
+from ppadb.client import Client as AdbClient # 实现通信的核心组件
 import sys
 
 def eprint(*args, **kwargs):
@@ -44,9 +50,20 @@ class OculusReader:
         self.stop()
 
     def run(self):
+        # 将实例的running属性设置为True，表示该方法正在运行
         self.running = True
+        # 使用adb命令启动Android设备上的特定应用
         self.device.shell('am start -n "com.rail.oculus.teleop/com.rail.oculus.teleop.MainActivity" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER')
-        self.thread = threading.Thread(target=self.device.shell, args=("logcat -T 0", self.read_logcat_by_line))
+        """
+            这行代码通过adb shell命令启动Android设备上的特定应用。
+            am start -n：使用Activity Manager (am)来启动一个新的Activity。
+            "com.rail.oculus.teleop/com.rail.oculus.teleop.MainActivity"：指定要启动的Activity的完全限定名称，com.rail.oculus.teleop是包名，com.rail.oculus.teleop.MainActivity是主Activity。
+            -a android.intent.action.MAIN：指定要启动的Activity的动作，这里是主动作（MAIN）。
+            -c android.intent.category.LAUNCHER：指定要启动的Activity的类别，这里是启动器类别（LAUNCHER）。
+        """
+        # 创建一个新线程，该线程的目标函数是self.device.shell，传递的参数是("logcat -T 0", self.read_logcat_by_line)，即在设备上运行 logcat -T 0 并使用self.read_logcat_by_line作为回调函数，用于逐行处理读取到的日志。
+        self.thread = threading.Thread(target=self.device.shell, args=("logcat -T 0", self.read_logcat_by_line)) 
+        # 启动该线程
         self.thread.start()
 
     def stop(self):
@@ -101,6 +118,7 @@ class OculusReader:
             if not installed or reinstall:
                 if APK_path is None:
                     APK_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'APK', 'teleop-debug.apk')
+                    print("using default APK_path:{}".format(APK_path))
                 success = self.device.install(APK_path, test=True, reinstall=reinstall)
                 installed = self.device.is_installed(self.APK_name)
                 if installed and success:
@@ -204,7 +222,9 @@ def main():
 
     while True:
         time.sleep(0.3)
-        print(oculus_reader.get_transformations_and_buttons())
+        ret = oculus_reader.get_transformations_and_buttons()
+        print(ret)
+        
 
 
 if __name__ == '__main__':

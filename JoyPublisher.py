@@ -14,7 +14,7 @@ def ret2string(ret):
         r = rotmat_right.reshape(1,-1)[0].tolist()
         r.append(rightGrip)
         r = [str(i) for i in r]
-        r = " ".join(r)
+        r = ",".join(r)
     except:
         r = "-1"
     

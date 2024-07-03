@@ -3,6 +3,7 @@ import numpy as np
 # from oculus_reader.reader import OculusReader
 from oculus_reader.reader_hand import OculusHandReader
 import time
+import math
 
 import rtde_control
 import rtde_receive
@@ -74,58 +75,102 @@ def rotation_matrix_to_euler_angles_xyz(R):
 
     return np.array([x, y, z])  # XYZ order
 
-def rotation_vector_to_matrix(rotation_vector):
-    """
-    Convert a rotation vector to a rotation matrix using Rodrigues' formula.
-    
-    Parameters:
-    rotation_vector (np.array): A 3-element array representing the rotation vector
+def axangle2mat(axis, angle, is_normalized=False):
+    ''' Rotation matrix for rotation angle `angle` around `axis`
+    Parameters
+    ----------
+    axis : 3 element sequence
+       vector specifying axis for rotation.
+    angle : scalar
+       angle of rotation in radians.
+    is_normalized : bool, optional
+       True if `axis` is already normalized (has norm of 1).  Default False.
+    Returns
+    -------
+    mat : array shape (3,3)
+       rotation matrix for specified rotation
+    Notes
+    -----
+    From: http://en.wikipedia.org/wiki/Rotation_matrix#Axis_and_angle
+    '''
+    x, y, z = axis
+    if not is_normalized:
+        n = math.sqrt(x*x + y*y + z*z)
+        x = x/n
+        y = y/n
+        z = z/n
+    c = math.cos(angle); s = math.sin(angle); C = 1-c
+    xs = x*s;   ys = y*s;   zs = z*s
+    xC = x*C;   yC = y*C;   zC = z*C
+    xyC = x*yC; yzC = y*zC; zxC = z*xC
+    return np.array([
+            [ x*xC+c,   xyC-zs,   zxC+ys ],
+            [ xyC+zs,   y*yC+c,   yzC-xs ],
+            [ zxC-ys,   yzC+xs,   z*zC+c ]])
 
-    Returns:
-    np.array: A 3x3 rotation matrix
-    """
-    angle = np.linalg.norm(rotation_vector)
-    if angle == 0:
-        return np.eye(3)
-    
-    axis = rotation_vector / angle
-    kx, ky, kz = axis
+def rxryrz2mat(rxryrz):
 
-    K = np.array([
-        [0, -kz, ky],
-        [kz, 0, -kx],
-        [-ky, kx, 0]
-    ])
+    x, y, z = rxryrz
+    n = math.sqrt(x*x + y*y + z*z)
+    x = x/n
+    y = y/n
+    z = z/n
+    angle = n
+    axis = rxryrz/n
 
-    I = np.eye(3)
-    R = I + np.sin(angle) * K + (1 - np.cos(angle)) * np.dot(K, K)
-    return R
+    return axangle2mat(axis,angle)
 
-def rotation_matrix_to_vector(R):
-    """
-    Convert a rotation matrix to a rotation vector using Rodrigues' formula.
-    
-    Parameters:
-    R (np.array): A 3x3 rotation matrix
+def mat2axangle(mat, unit_thresh=1e-5):
+        """Return axis, angle and point from (3, 3) matrix `mat`
+        Parameters
+        ----------
+        mat : array-like shape (3, 3)
+            Rotation matrix
+        unit_thresh : float, optional
+            Tolerable difference from 1 when testing for unit eigenvalues to
+            confirm `mat` is a rotation matrix.
+        Returns
+        -------
+        axis : array shape (3,)
+           vector giving axis of rotation
+        angle : scalar
+           angle of rotation in radians.
+        Examples
+        --------
+        # >>> direc = np.random.random(3) - 0.5
+        # >>> angle = (np.random.random() - 0.5) * (2*math.pi)
+        # >>> R0 = axangle2mat(direc, angle)
+        # >>> direc, angle = mat2axangle(R0)
+        # >>> R1 = axangle2mat(direc, angle)
+        # >>> np.allclose(R0, R1)
+        True
+        Notes
+        -----
+        http://en.wikipedia.org/wiki/Rotation_matrix#Axis_of_a_rotation
+        """
+        M = np.asarray(mat, dtype=np.float32)
+        # direction: unit eigenvector of R33 corresponding to eigenvalue of 1
+        L, W = np.linalg.eig(M.T)
+        i = np.where(np.abs(L - 1.0) < unit_thresh)[0]
+        if not len(i):
+            raise ValueError("no unit eigenvector corresponding to eigenvalue 1")
+        direction = np.real(W[:, i[-1]]).squeeze()
+        # rotation angle depending on direction
+        cosa = (np.trace(M) - 1.0) / 2.0
+        if abs(direction[2]) > 1e-8:
+            sina = (M[1, 0] + (cosa - 1.0) * direction[0] * direction[1]) / direction[2]
+        elif abs(direction[1]) > 1e-8:
+            sina = (M[0, 2] + (cosa - 1.0) * direction[0] * direction[2]) / direction[1]
+        else:
+            sina = (M[2, 1] + (cosa - 1.0) * direction[1] * direction[2]) / direction[0]
+        angle = math.atan2(sina, cosa)
+        
+        return direction, angle
 
-    Returns:
-    np.array: A 3-element array representing the rotation vector
-    """
-    angle = np.arccos((np.trace(R) - 1) / 2)
-    if angle == 0:
-        return np.zeros(3)
-
-    sin_angle = np.sin(angle)
-    kx = (R[2, 1] - R[1, 2]) / (2 * sin_angle)
-    ky = (R[0, 2] - R[2, 0]) / (2 * sin_angle)
-    kz = (R[1, 0] - R[0, 1]) / (2 * sin_angle)
-
-    rotation_vector = angle * np.array([kx, ky, kz])
-
-    if np.isnan(rotation_vector).any():
-        raise ValueError("The resulting rotation matrix contains NaN values")
-    
-    return rotation_vector
+def mat2rxryrz(mat, unit_thresh=1e-5):
+    direction, angle = mat2axangle(mat, unit_thresh)
+    rxryrz = direction[:3] * angle
+    return rxryrz
 
 def ensure_vector_continuity(current_vector, new_vector):
     """
@@ -141,33 +186,6 @@ def ensure_vector_continuity(current_vector, new_vector):
     if np.dot(current_vector, new_vector) < 0:
         return -new_vector
     return new_vector
-
-# def o3d_left_multiply_transform(mesh_frame, M):
-#     """
-#     Apply a transformation matrix to a mesh frame using left multiplication.
-
-#     Parameters:
-#     mesh_frame (o3d.geometry.TriangleMesh): The mesh frame to be transformed.
-#     M (np.array): The 4x4 transformation matrix to apply.
-
-#     Returns:
-#     None
-#     """
-#     # Get the current transformation matrix of the mesh frame
-#     current_transform = mesh_frame.get_rotation_matrix_from_xyz((0, 0, 0))
-#     # Get the current translation of the mesh frame
-#     current_translation = np.asarray(mesh_frame.get_center())
-
-#     # Construct the current 4x4 transformation matrix
-#     current_transform_4x4 = np.eye(4)
-#     current_transform_4x4[:3, :3] = current_transform
-#     current_transform_4x4[:3, 3] = current_translation
-
-#     # Left multiply the new transformation matrix
-#     new_transform = np.dot(M, current_transform_4x4)
-
-#     # Apply the new transformation to the mesh frame
-#     mesh_frame.transform(new_transform)
 
 
 def o3d_left_multiply_transform(mesh, M):
@@ -294,6 +312,9 @@ def test():
          -4.365320030842916])
     # success = diana.move_joints(joints_pos_home,wait=True, vel=0.5)
 
+
+    tcp_current_pose = rtde_r.getActualTCPPose()  # xyz rx ry rz
+
     rot_vr2bot = np.array([1,0,0,0,0,-1,0,1,0]).reshape((3, 3))  # 眼镜与机器人基座的坐标系转换
     # rot_tcp = np.array([-1,0,0, 0,1,0, 0,0,-1]).reshape((3,3))
     # rot_tcp = np.array([1, 0, 0, 0, -1, 0, 0, 0, -1]).reshape((3, 3))  # tcp与手柄的转换关系
@@ -316,9 +337,14 @@ def test():
     TIME_STEP = 0.05
     VIS=True
     MOVE_ROBOT=False
+    if MOVE_ROBOT:
+        import pdb
+        input("Warning: You are trying to move the real robot!!! Press Enter to continue...")
 
-    USE_KALMAN=True
-    ORIENTATION_CLIP=False
+    USE_KALMAN_POS=True
+    USE_KALMAN_ORIENT=False
+
+    ORIENTATION_CLIP=True
 
     if VIS:
         # 创建两个坐标系
@@ -349,7 +375,7 @@ def test():
     kf_orientation = KalmanFilter(dim_x=3, dim_z=3)
     kf_orientation.set_measurement_matrix(np.eye(3))
     kf_orientation.set_process_noise_covariance(0.01 * np.eye(3))
-    kf_orientation.set_measurement_noise_covariance(0.4 * np.eye(3))
+    kf_orientation.set_measurement_noise_covariance(0.2 * np.eye(3))
     kf_orientation.set_initial_state(x=np.array([3, -0.4, 0.6]))
 
     dot_translation_pre = None
@@ -362,7 +388,7 @@ def test():
             rotmat_right = ret[0] # 4*4
             tmp = rotmat_right[:3,3]
             # print("hand translation:{}".format(rotmat_right[:3,3]))
-            print("rotmat_right: {}".format(rotmat_right))
+            print("rotmat_right:\n{}".format(rotmat_right))
         except:
             print("oculus_reader.get_transformations_and_buttons failed!!!")
             continue
@@ -374,7 +400,7 @@ def test():
 
         dot_translation = rotmat_right[:3, -1]
         # Kalman filter update for position
-        if USE_KALMAN:
+        if USE_KALMAN_POS:
             kf_position.predict()
             kf_position.update(dot_translation)
             dot_translation_filtered = kf_position.x
@@ -385,14 +411,44 @@ def test():
         dot_translation_relative = np.zeros(3)
 
         tcp_current_pose = rtde_r.getActualTCPPose()  # xyz rx ry rz
+        tcp_current_pose = np.array(tcp_current_pose)
 
         h_tcp2bot = np.eye(4)
         h_tcp2bot[:3,3] = tcp_current_pose[:3]
-        rot = rotation_vector_to_matrix([tcp_current_pose[3],tcp_current_pose[4],tcp_current_pose[5]])
-        rot = orthogonalize_rotation_matrix(rot)
+        # rot = rotation_vector_to_matrix([tcp_current_pose[3],tcp_current_pose[4],tcp_current_pose[5]])
+        # rot = orthogonalize_rotation_matrix(rot)
+
+        angle = math.sqrt(tcp_current_pose[3]**2 + tcp_current_pose[4]**2 + tcp_current_pose[5]**2)
+        axis = tcp_current_pose[3:]
+        rot = axangle2mat(axis=axis,angle=angle)
         h_tcp2bot[:3,:3] = rot
 
         # h_tcp2bot = urpose2homomatrix(tcp_current_pose)
+        
+        R_bot_dot = np.dot(rot_vr2bot, orthogonalize_rotation_matrix(rotmat_right[:3, :3]))
+        # orientation = rotation_matrix_to_vector(R_bot_dot @ rot_tcp)
+        R_tmp = R_bot_dot @ rot_tcp
+        h_tmp = np.eye(4)
+        h_tmp[:3,:3] = R_tmp
+        orientation = np.asarray([3,0,0])
+        # orientation = rotation_matrix_to_euler_angles_xyz(R_tmp)
+        # orientation = ensure_vector_continuity(tcp_current_pose[3:], orientation)
+        # orientation = rotation_matrix_to_vector(R_tmp)
+        orientation = mat2rxryrz(h_tmp[:3,:3])
+
+        orientation_filtered = orientation
+        if USE_KALMAN_ORIENT:
+            print("orientation before kalman and clip: {}".format(orientation))
+            kf_orientation.predict()
+            kf_orientation.update(orientation)
+            orientation_filtered = kf_orientation.x
+            
+
+        if ORIENTATION_CLIP:
+            orientation_standard = np.asarray([3,0,0])
+            orientation_filtered_clipped = limit_orientation_change(orientation_standard, orientation_filtered, max_change=0.8)
+            print("orientation after kalman and clip: {}".format(orientation_filtered_clipped))
+            orientation_filtered = orientation_filtered_clipped
         
 
         if VIS:
@@ -434,29 +490,6 @@ def test():
                 tcp_next_translation = (tcp_current_pose[:3] + dot_translation_relative_scaled)
                 print("tcp_next_translation: {}".format(tcp_next_translation))
 
-                rotmat_right[:3, :3]
-                R_bot_dot = np.dot(rot_vr2bot, orthogonalize_rotation_matrix(rotmat_right[:3, :3]))
-
-                # orientation = rotation_matrix_to_vector(R_bot_dot @ rot_tcp)
-                R_tmp = R_bot_dot @ rot_tcp
-                h_tmp = np.eye(4)
-                h_tmp[:3,:3] = R_tmp
-
-
-                orientation = rotation_matrix_to_euler_angles_xyz(R_tmp)
-                # orientation = ensure_vector_continuity(tcp_current_pose[3:], orientation)
-
-                if USE_KALMAN:
-                    print("orientation before kalman and clip: {}".format(orientation))
-                    kf_orientation.predict()
-                    kf_orientation.update(orientation)
-                    orientation_filtered = kf_orientation.x
-
-                if ORIENTATION_CLIP:
-                    orientation_standard = np.asarray([3,0,0])
-                    orientation_filtered_clipped = limit_orientation_change(orientation_standard, orientation_filtered, max_change=0.6)
-                    print("orientation after kalman and clip: {}".format(orientation_filtered_clipped))
-
                 # orientation = np.array([0,0,0])
                 # tcp_pos_target = np.concatenate([tcp_next_translation, orientation], axis=-1)
                 # tcp_pos_target = np.concatenate([tcp_current_pose[:3], orientation_filtered], axis=-1)
@@ -464,13 +497,16 @@ def test():
 
                 if VIS:
                     mesh_frame_tcp_target.vertices = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.4).vertices
-                    # h_tmp = urpose2homomatrix(tcp_pos_target)
-                    h_tmp[:3,3] = tcp_current_pose[:3]
+                    
+                    # h_tmp[:3,:3] = rxryrz2mat(tcp_pos_target[3:])
+                    # h_tmp[:3,:3] = rxryrz2mat(orientation)
+                    # h_tmp[:3,:3] = rxryrz2mat(orientation_filtered)
+                    
+                    h_tmp[:3,3] = tcp_pos_target[:3]
                     mesh_frame_tcp_target.transform(h_tmp)
                     vis.update_geometry(mesh_frame_tcp_target)
                     vis.poll_events()
                     vis.update_renderer()
-
 
                 if MOVE_ROBOT:
                     vel = 0.05

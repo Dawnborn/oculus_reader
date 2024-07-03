@@ -13,16 +13,19 @@ from utils import axangle2mat, orthogonalize_rotation_matrix, mat2rxryrz, limit_
 def test():
     rtde_c = rtde_control.RTDEControlInterface("10.3.15.95")
     rtde_r = rtde_receive.RTDEReceiveInterface("10.3.15.95")
-    init_q = rtde_r.getActualQ()
+    init_q = rtde_r.getActualQ() # [0.4281730651855469, -1.8017007313170375, -2.3542089462280273, 0.9464456278034667, -5.328896347676412, -0.42126590410341436]
 
     joints_pos_home = np.asarray(
-        [0.26260805130004883, -1.2464478772929688, -1.9548711776733398, -1.4632833761027833, 1.7008233070373535,
-         -4.365320030842916])
+        [0.4281730651855469, -1.8017007313170375, -2.3542089462280273, 0.9464456278034667, -5.328896347676412, -0.42126590410341436])
+
 
     tcp_current_pose = rtde_r.getActualTCPPose()
     rot_vr2bot = np.array([1,0,0,0,0,-1,0,1,0]).reshape((3, 3))
     rot_tcp = np.array([0,1,0, 0,0,1, 1,0,0]).reshape((3,3))
-    rot_tcp = np.eye(3)
+    # rot_tcp = np.eye(3)
+    rot_tcp = np.array([[  0.0000000,  0.0000000,  1.0000000],
+   [1.0000000,  0.0000000, -0.0000000],
+  [-0.0000000,  1.0000000,  0.0000000 ]])
 
     h_vr2bot = np.eye(4)
     h_vr2bot[:3,:3] = rot_vr2bot
@@ -32,9 +35,10 @@ def test():
     TIME_STEP = 0.05
     VIS=True
     VIS_URVECTOR=True
-    MOVE_ROBOT=False
+    MOVE_ROBOT=True
     if MOVE_ROBOT:
         input("Warning: You are trying to move the real robot!!! Press Enter to continue...")
+        rtde_c.moveJ(joints_pos_home, 1.05, 1.4, True)
 
     USE_KALMAN_POS=True
     USE_KALMAN_ORIENT=False
@@ -56,7 +60,7 @@ def test():
         vis.add_geometry(mesh_frame_tcp_target)
 
     input("please put on the VR device to wake it up before continue")
-    oculus_reader = OculusHandReader(reinstall=False)
+    oculus_reader = OculusHandReader(reinstall=False,tag="xyzxyzw")
 
     kf_position = KalmanFilter(dim_x=3, dim_z=3)
     kf_position.set_measurement_matrix(np.eye(3))
@@ -158,7 +162,8 @@ def test():
                 dot_translation_relative_scaled = np.clip(dot_translation_relative_scaled, -0.1, 0.1)
                 tcp_next_translation = (tcp_current_pose[:3] + dot_translation_relative_scaled)
 
-                tcp_pos_target = np.concatenate([tcp_current_pose[:3], orientation_filtered], axis=-1)
+                # tcp_pos_target = np.concatenate([tcp_current_pose[:3], orientation_filtered], axis=-1)
+                tcp_pos_target = np.concatenate([tcp_next_translation, orientation_filtered], axis=-1)
 
                 # Update the live plot with the new TCP position
                 if VIS_URVECTOR:

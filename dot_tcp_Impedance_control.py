@@ -51,6 +51,8 @@ def test():
     # )
 
     joints_pos_home = np.asarray([0.20555325057509052, -0.011840602165761105, -0.30533428759153086, 1.6415630854522976, 0.0369351961063038, -1.3390572623605348, 0.15645387821129342])
+    joints_pos_home_comfortable = np.asarray([-0.3217043652809522, -1.3601858266350673, -1.221276667477448, 2.0515913808037585, -1.428723612953972, -1.4892435778262654, -1.971477207043301])
+    joints_pos_home_comfortable = np.asarray([-0.3794203958652927, -1.333161397862707, -1.2504342884101105, 2.0816358344322756, -1.3115897917472972, -1.6295788598326255, -1.7335783442671904])
     # success = diana.move_joints(joints_pos_home,wait=True, vel=0.5)
 
     rot_vr2bot = np.array([-1,0,0, 0,0,1, 0,1,0]).reshape((3,3)) # 眼镜与机器人基座的坐标系转换
@@ -61,10 +63,14 @@ def test():
     scale = 4
     scale = 6 # servo
     # scale = 12
-    scale = 24
+    # scale = 24
     # scale = 36
     # scale = 42
     # scale = 1
+    scale = 18
+
+    threshold = 3e-3
+    scale2 = 12 
 
     vel_scale = 8
     # vel_scale = 3
@@ -104,10 +110,9 @@ def test():
             continue
 
         if(buttons['B']):
-            print("quiting....")
-            diana.stop()
-            print("return")
-            return
+            success = diana.move_joints(joints_pos_home_comfortable,wait=True, vel=0.5, acc=0.5)
+            print(f"Move joints home comfortable success: {success}")
+            continue
 
         dot_translation = rotmat_right[:3,-1]
         dot_translation_relative = np.zeros(3)
@@ -120,21 +125,15 @@ def test():
                 dot_translation_relative = (dot_translation - dot_translation_pre)
                 dot_translation_relative = np.dot(rot_vr2bot, dot_translation_relative)
                 dot_translation_relative_scaled = dot_translation_relative*scale
+                print("dot_translation_relative (unscaled): {}".format(dot_translation_relative))
                 print("dot_translation_relative (scaled): {}".format(dot_translation_relative_scaled))
                 tcp_current_pose = diana.get_tcp_pos()
                 print("tcp_current_translation: {}".format(tcp_current_pose[:3]))
-                dot_translation_relative_scaled = np.clip(dot_translation_relative_scaled, -0.1, 0.1)
+                dot_translation_relative_scaled = np.clip(dot_translation_relative_scaled, -0.05, 0.05)
                 tcp_next_translation = tcp_current_pose[:3] + dot_translation_relative_scaled
                 print("tcp_next_translation: {}".format(tcp_next_translation))
 
-                vel_raw = np.linalg.norm(dot_translation_relative)
-                print("\n vel_raw: {} m/s \n".format(vel_raw))
-                # if vel_raw < 0.001:
-                #     print("not moving!")
-                #     continue
-
-                vel_raw *= vel_scale
-
+                translation_norm_raw = np.linalg.norm(dot_translation_relative)
                 
                 R_bot_dot = np.dot(rot_vr2bot,rotmat_right[:3,:3])
                 orientation = rotation_matrix_to_euler_angles(R_bot_dot@rot_tcp)
@@ -144,19 +143,6 @@ def test():
                 orientation_pre = tcp_current_pose[3:6]
                 orientation_diff = np.linalg.norm(orientation_pre - orientation)
                 print("orientation_diff: {}".format(orientation_diff))
-                vel_raw += orientation_diff
-
-                vel = vel_raw
-                # if vel_raw < 0.001:
-                #     print("not moving!")
-                #     continue
-
-                if vel < 0.3:
-                    vel = 0.3
-                if vel>0.5:
-                    vel = 0.5
-                print("\n vel: {} m/s \n".format(vel))
-                print("\n orientation :{} \n".format(orientation))
 
                 tcp_pos_target = np.concatenate([tcp_next_translation,orientation],axis=-1)
 
@@ -166,7 +152,13 @@ def test():
                 #     acc=2,
                 #     wait=wait
                 # )
-                success = diana.move_tcp_servoL(tcp_pos=tcp_pos_target, ah_t=0.09, t=TIME_STEP, gain=100, realiable=True)
+
+                if translation_norm_raw < threshold:
+                # if True:
+                    print("small movement")
+                    success = diana.move_tcp_servoL(tcp_pos=tcp_pos_target, ah_t=0.16, t=TIME_STEP, gain=100, realiable=True)
+                else:
+                    success = diana.move_tcp_servoL(tcp_pos=tcp_pos_target, ah_t=0.09, t=TIME_STEP, gain=100, realiable=True)
                 print(f"Move joints success: {success}")
 
                 dot_translation_pre = dot_translation

@@ -105,3 +105,9 @@ pip install -e .
 ```bash
 pip install --user ur_rtde
 ```
+
+# Myinstall P2
+
+```bash
+conda create -n oculus38p2 --clone oculus38
+```
