@@ -108,7 +108,7 @@ def rxryrz2mat(rxryrz):
     y = y/n
     z = z/n
     angle = n
-    axis = rxryrz/n
+    axis = [r/n for r in rxryrz]
 
     return axangle2mat(axis,angle)
 

@@ -111,3 +111,8 @@ pip install --user ur_rtde
 ```bash
 conda create -n oculus38p2 --clone oculus38
 ```
+
+# P2方位
+x朝向肩后
+y沿躯干向下
+z沿右肩朝外

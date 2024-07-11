@@ -1,0 +1,13 @@
+time_step: 0.02
+use_kalman: True
+process_noise_covariance: 0.01
+measurement_noise_covariance: 0.2
+
+threshold: 0.0003 # threshold for small / large movement
+scale: 4 # scale for relative position
+clip_threshold: 0.1 # clip the relative position
+
+ahead_time: 0.021
+gain: 250
+# ip_addr: "192.168.100.63" # right arm
+ip_addr: "192.168.100.85" # left arm

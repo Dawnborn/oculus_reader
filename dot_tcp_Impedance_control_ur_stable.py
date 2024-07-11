@@ -75,7 +75,7 @@ def test():
     TIME_STEP = 0.02
 
     input("please put on the VR device to wake it up before continue")
-    oculus_reader = OculusReader(reinstall=True,APK_path="oculus_reader/APK/teleop-debug.apks")
+    oculus_reader = OculusReader()
 
     dot_translation_pre = None
     while (True):
