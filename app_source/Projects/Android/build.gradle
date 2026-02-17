@@ -45,6 +45,6 @@ android {
 
 tasks.withType(Exec) {
     if (it.commandLine.contains('python')) {
-        it.commandLine = ['/usr/local/bin/python', *it.commandLine.drop(1)]
+        it.commandLine = ['python3', *it.commandLine.drop(1)]
     }
 }

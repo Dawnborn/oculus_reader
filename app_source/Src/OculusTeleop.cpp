@@ -981,6 +981,7 @@ void ovrVrInputStandard::RenderRunningFrame(
         printPoseNow = true;
         FrameIndexToPrint = 0;
     }
+    (void)printPoseNow;
 
     //------------------------------------------------------------------------------------------
 
