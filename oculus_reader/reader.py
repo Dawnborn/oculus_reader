@@ -4,6 +4,7 @@ import numpy as np
 import threading
 import time
 import os
+import socket
 from ppadb.client import Client as AdbClient
 import sys
 
@@ -15,12 +16,16 @@ def eprint(*args, **kwargs):
     sys.stderr.write(RESET)
 
 class OculusReader:
+    UDP_PORT = 51456
+    SUBSCRIBE_INTERVAL = 2.0
+
     def __init__(self,
             ip_address=None,
             port = 5555,
             APK_name='com.rail.oculus.teleop',
             print_FPS=False,
-            run=True
+            run=True,
+            use_udp=True
         ):
         self.running = False
         self.last_transforms = {}
@@ -32,6 +37,7 @@ class OculusReader:
         self.port = port
         self.APK_name = APK_name
         self.print_FPS = print_FPS
+        self.use_udp = use_udp
         if self.print_FPS:
             self.fps_counter = FPSCounter()
 
@@ -43,16 +49,116 @@ class OculusReader:
     def __del__(self):
         self.stop()
 
+    def _get_quest_ip(self):
+        """Get the Quest's WiFi IP address via ADB."""
+        try:
+            output = self.device.shell('ip route')
+            # Parse: "10.0.30.0/19 dev wlan0 proto kernel scope link src 10.0.32.101"
+            for line in output.strip().split('\n'):
+                if 'wlan0' in line and 'src' in line:
+                    parts = line.split('src')
+                    if len(parts) >= 2:
+                        return parts[1].strip().split()[0]
+        except Exception as e:
+            eprint(f'Failed to get Quest IP: {e}')
+        return None
+
+    def _udp_subscribe_loop(self):
+        """Periodically send SUBSCRIBE packets to the Quest."""
+        quest_ip = self._quest_ip
+        if quest_ip is None:
+            eprint('Quest IP not available, cannot subscribe via UDP')
+            return
+
+        local_port = self._udp_recv_socket.getsockname()[1]
+        subscribe_msg = f'SUBSCRIBE:{local_port}'.encode('utf-8')
+        dest = (quest_ip, self.UDP_PORT)
+        print(f'UDP: subscribing to Quest at {quest_ip}:{self.UDP_PORT}, local port {local_port}')
+
+        while self.running:
+            try:
+                self._udp_send_socket.sendto(subscribe_msg, dest)
+            except Exception as e:
+                eprint(f'UDP subscribe send error: {e}')
+            time.sleep(self.SUBSCRIBE_INTERVAL)
+
+    def _udp_receive_loop(self):
+        """Receive UDP data packets from the Quest."""
+        while self.running:
+            try:
+                data, addr = self._udp_recv_socket.recvfrom(4096)
+                if not data:
+                    continue
+                msg = data.decode('utf-8', errors='ignore').strip()
+                if msg:
+                    transforms, buttons = OculusReader.process_data(msg)
+                    if transforms is not None:
+                        with self._lock:
+                            self.last_transforms, self.last_buttons = transforms, buttons
+                        if self.print_FPS:
+                            self.fps_counter.getAndPrintFPS()
+            except socket.timeout:
+                continue
+            except UnicodeDecodeError:
+                pass
+            except Exception as e:
+                if self.running:
+                    eprint(f'UDP receive error: {e}')
+
     def run(self):
         self.running = True
         self.device.shell('am start -n "com.rail.oculus.teleop/com.rail.oculus.teleop.MainActivity" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER')
-        self.thread = threading.Thread(target=self.device.shell, args=("logcat -T 0", self.read_logcat_by_line))
-        self.thread.start()
+
+        if self.use_udp:
+            self._quest_ip = self._get_quest_ip()
+            if self._quest_ip is None:
+                eprint('Could not determine Quest IP. Falling back to logcat mode.')
+                self.use_udp = False
+
+        if self.use_udp:
+            # Create UDP receive socket
+            self._udp_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._udp_recv_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._udp_recv_socket.bind(('0.0.0.0', 0))  # bind to any available port
+            self._udp_recv_socket.settimeout(1.0)
+
+            # Create UDP send socket for subscribe messages
+            self._udp_send_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+            print(f'UDP: Quest IP = {self._quest_ip}')
+
+            # Start subscribe thread
+            self._subscribe_thread = threading.Thread(target=self._udp_subscribe_loop, daemon=True)
+            self._subscribe_thread.start()
+
+            # Start receive thread
+            self._recv_thread = threading.Thread(target=self._udp_receive_loop, daemon=True)
+            self._recv_thread.start()
+        else:
+            # Fallback: logcat mode
+            self.thread = threading.Thread(target=self.device.shell, args=("logcat -T 0", self.read_logcat_by_line))
+            self.thread.start()
 
     def stop(self):
         self.running = False
-        if hasattr(self, 'thread'):
-            self.thread.join()
+        if self.use_udp:
+            if hasattr(self, '_udp_recv_socket'):
+                try:
+                    self._udp_recv_socket.close()
+                except Exception:
+                    pass
+            if hasattr(self, '_udp_send_socket'):
+                try:
+                    self._udp_send_socket.close()
+                except Exception:
+                    pass
+            if hasattr(self, '_subscribe_thread'):
+                self._subscribe_thread.join(timeout=3)
+            if hasattr(self, '_recv_thread'):
+                self._recv_thread.join(timeout=3)
+        else:
+            if hasattr(self, 'thread'):
+                self.thread.join()
 
     def get_network_device(self, client, retry=0):
         try:

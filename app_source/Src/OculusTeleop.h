@@ -15,6 +15,12 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
 #include <memory>
 #include <unordered_map>
 #include <functional>
+#include <atomic>
+#include <thread>
+#include <mutex>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "Appl.h"
 #include "OVR_FileSys.h"
@@ -574,6 +580,27 @@ namespace OVRFW {
 
         bool IsDeviceTypeEnabled(const ovrInputDeviceBase& device) const;
         void RenderRunningFrame(const OVRFW::ovrApplFrameIn& in, OVRFW::ovrRendererOutput& out);
+
+        // UDP networking
+        static constexpr int UDP_PORT = 51456;
+        static constexpr double SUBSCRIBE_TIMEOUT_SEC = 5.0;
+
+        void InitUdpSocket();
+        void ShutdownUdpSocket();
+        void UdpListenLoop();
+        void SendUdpData(const std::string& data);
+        std::string GetDeviceIpAddress();
+
+        int udpSocket_ = -1;
+        std::thread udpListenThread_;
+        std::atomic<bool> udpRunning_{false};
+
+        std::mutex subscriberMutex_;
+        struct sockaddr_in subscriberAddr_;
+        std::atomic<bool> hasSubscriber_{false};
+        double lastSubscribeTime_ = 0.0;
+
+        std::string deviceIpAddress_;
     };
 
 } // namespace OVRFW

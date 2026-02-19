@@ -31,6 +31,10 @@ Copyright   : Copyright (c) Facebook Technologies, LLC and its affiliates. All r
 #include <sstream>
 #include <iomanip>
 #include <array>
+#include <unistd.h>
+#include <ifaddrs.h>
+#include <cstring>
+#include <cerrno>
 #if defined(__ANDROID__)
 #include <sys/system_properties.h>
 #endif
@@ -853,6 +857,10 @@ bool ovrVrInputStandard::AppInit(const OVRFW::ovrAppContext* context) {
 
     SurfaceRender.Init();
 
+    //------------------------------------------------------------------------------------------
+    // Initialize UDP socket for network streaming
+    InitUdpSocket();
+
     return true;
 }
 
@@ -877,6 +885,9 @@ void ovrVrInputStandard::ResetLaserPointer(ovrInputDeviceHandBase& trDevice) {
 // ovrVrInputStandard::AppShutdown
 void ovrVrInputStandard::AppShutdown(const OVRFW::ovrAppContext* context) {
     ALOG("AppShutdown");
+
+    ShutdownUdpSocket();
+
     for (int i = InputDevices.size() - 1; i >= 0; --i) {
         OnDeviceDisconnected(InputDevices[i]->GetDeviceID());
     }
@@ -953,6 +964,18 @@ OVRFW::ovrApplFrameOut ovrVrInputStandard::AppFrame(const OVRFW::ovrApplFrameIn&
         } else {
             statusLabelText.clear();
             statusLabelText << connectedDevices << " standard pointer\ndevices available";
+        }
+
+        // Show UDP network status
+        statusLabelText << std::endl << "IP: " << deviceIpAddress_ << ":" << UDP_PORT;
+        if (hasSubscriber_) {
+            std::lock_guard<std::mutex> lock(subscriberMutex_);
+            char pcIpStr[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &subscriberAddr_.sin_addr, pcIpStr, sizeof(pcIpStr));
+            int pcPort = ntohs(subscriberAddr_.sin_port);
+            statusLabelText << std::endl << "UDP: -> " << pcIpStr << ":" << pcPort;
+        } else {
+            statusLabelText << std::endl << "UDP: waiting";
         }
 
         StatusLabel->SetText(statusLabelText.str().c_str());
@@ -1276,6 +1299,8 @@ void ovrVrInputStandard::RenderRunningFrame(
     output_ss << "&" << buttons_ss.str();
     __android_log_print(ANDROID_LOG_INFO, "wE9ryARX", "%s",
                         output_ss.str().c_str());
+    // Send via UDP to subscribed PC
+    SendUdpData(output_ss.str());
     // Add axis
     if (SampleConfiguration.RenderAxis && AxisSurface.surface != nullptr) {
         const_cast<OVRFW::ovrSurfaceDef*>(AxisSurface.surface)->numInstances = axisSurfaces;
@@ -1584,6 +1609,149 @@ void ovrVrInputStandard::AppResumed(const OVRFW::ovrAppContext* /* context */) {
 
 void ovrVrInputStandard::AppPaused(const OVRFW::ovrAppContext* /* context */) {
     ALOGV("ovrVrInputStandard::AppPaused");
+}
+
+//---------------------------------------------------------------------------------------------------
+// UDP networking
+//---------------------------------------------------------------------------------------------------
+
+std::string ovrVrInputStandard::GetDeviceIpAddress() {
+    struct ifaddrs* ifAddrList = nullptr;
+    if (getifaddrs(&ifAddrList) == -1) {
+        ALOG("UDP - getifaddrs failed: %s", strerror(errno));
+        return "unknown";
+    }
+    std::string result = "unknown";
+    for (struct ifaddrs* ifa = ifAddrList; ifa != nullptr; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == nullptr) continue;
+        if (ifa->ifa_addr->sa_family != AF_INET) continue;
+        // Skip loopback
+        if (strcmp(ifa->ifa_name, "lo") == 0) continue;
+        struct sockaddr_in* sa = (struct sockaddr_in*)ifa->ifa_addr;
+        char buf[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &sa->sin_addr, buf, sizeof(buf));
+        // Prefer wlan interface
+        if (strncmp(ifa->ifa_name, "wlan", 4) == 0) {
+            result = buf;
+            break;
+        }
+        if (result == "unknown") {
+            result = buf;
+        }
+    }
+    freeifaddrs(ifAddrList);
+    return result;
+}
+
+void ovrVrInputStandard::InitUdpSocket() {
+    udpSocket_ = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udpSocket_ < 0) {
+        ALOG("UDP - socket creation failed: %s", strerror(errno));
+        return;
+    }
+
+    // Set receive timeout so the listen thread can check udpRunning_ periodically
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(udpSocket_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in serverAddr;
+    memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serverAddr.sin_port = htons(UDP_PORT);
+
+    if (bind(udpSocket_, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+        ALOG("UDP - bind failed on port %d: %s", UDP_PORT, strerror(errno));
+        close(udpSocket_);
+        udpSocket_ = -1;
+        return;
+    }
+
+    deviceIpAddress_ = GetDeviceIpAddress();
+    ALOG("UDP - listening on %s:%d", deviceIpAddress_.c_str(), UDP_PORT);
+
+    memset(&subscriberAddr_, 0, sizeof(subscriberAddr_));
+    hasSubscriber_ = false;
+
+    udpRunning_ = true;
+    udpListenThread_ = std::thread(&ovrVrInputStandard::UdpListenLoop, this);
+}
+
+void ovrVrInputStandard::ShutdownUdpSocket() {
+    udpRunning_ = false;
+    if (udpListenThread_.joinable()) {
+        udpListenThread_.join();
+    }
+    if (udpSocket_ >= 0) {
+        close(udpSocket_);
+        udpSocket_ = -1;
+    }
+    hasSubscriber_ = false;
+    ALOG("UDP - shutdown complete");
+}
+
+void ovrVrInputStandard::UdpListenLoop() {
+    char recvBuf[256];
+    while (udpRunning_) {
+        struct sockaddr_in clientAddr;
+        socklen_t clientLen = sizeof(clientAddr);
+        ssize_t n = recvfrom(udpSocket_, recvBuf, sizeof(recvBuf) - 1, 0,
+                             (struct sockaddr*)&clientAddr, &clientLen);
+        if (n > 0) {
+            recvBuf[n] = '\0';
+            std::string msg(recvBuf);
+            if (msg.find("SUBSCRIBE") == 0) {
+                // Parse optional port: "SUBSCRIBE:12345"
+                int replyPort = ntohs(clientAddr.sin_port);
+                size_t colonPos = msg.find(':');
+                if (colonPos != std::string::npos) {
+                    int parsed = atoi(msg.c_str() + colonPos + 1);
+                    if (parsed > 0 && parsed <= 65535) {
+                        replyPort = parsed;
+                    }
+                }
+
+                char ipStr[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &clientAddr.sin_addr, ipStr, sizeof(ipStr));
+
+                {
+                    std::lock_guard<std::mutex> lock(subscriberMutex_);
+                    memset(&subscriberAddr_, 0, sizeof(subscriberAddr_));
+                    subscriberAddr_.sin_family = AF_INET;
+                    subscriberAddr_.sin_addr = clientAddr.sin_addr;
+                    subscriberAddr_.sin_port = htons(replyPort);
+                    hasSubscriber_ = true;
+
+                    struct timespec ts;
+                    clock_gettime(CLOCK_MONOTONIC, &ts);
+                    lastSubscribeTime_ = ts.tv_sec + ts.tv_nsec / 1e9;
+                }
+                ALOG("UDP - subscriber registered: %s:%d", ipStr, replyPort);
+            }
+        }
+
+        // Check subscriber timeout
+        if (hasSubscriber_) {
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            double now = ts.tv_sec + ts.tv_nsec / 1e9;
+            std::lock_guard<std::mutex> lock(subscriberMutex_);
+            if (now - lastSubscribeTime_ > SUBSCRIBE_TIMEOUT_SEC) {
+                hasSubscriber_ = false;
+                ALOG("UDP - subscriber timed out");
+            }
+        }
+    }
+}
+
+void ovrVrInputStandard::SendUdpData(const std::string& data) {
+    if (udpSocket_ < 0 || !hasSubscriber_) return;
+
+    std::lock_guard<std::mutex> lock(subscriberMutex_);
+    sendto(udpSocket_, data.c_str(), data.size(), 0,
+           (struct sockaddr*)&subscriberAddr_, sizeof(subscriberAddr_));
 }
 
 void ovrInputDeviceHandBase::InitFromSkeletonAndMesh(
